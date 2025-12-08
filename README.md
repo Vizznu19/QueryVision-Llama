@@ -16,7 +16,7 @@ Before running the project, you need these installed on your system:
 1.  **Python 3.10+**
 2.  **Ollama** (The AI Brain)
     * Download from [ollama.com](https://ollama.com/).
-    * Install it and run `ollama pull llama3.2` in your terminal.
+    * Install it and run `ollama pull llama3.2` in your system terminal.
 3.  **FFmpeg** (The Video Cutter)
     * Download "ffmpeg-essentials" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
     * Extract `ffmpeg.exe` and place it **directly inside this project folder** (next to `app.py`).
