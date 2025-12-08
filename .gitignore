@@ -1,0 +1,25 @@
+# Ignore Virtual Environment
+.venv/
+venv/
+env/
+
+# Ignore Python Cache
+__pycache__/
+*.pyc
+
+# Ignore Heavy AI Caches (Users will download these themselves)
+hf_cache/
+runs/
+
+# Ignore Local Data (Privacy)
+project_data/*
+search_output/*
+metadata.pkl
+
+# Ignore Huge Binary Files
+ffmpeg.exe
+*.pt
+*.onnx
+
+# Ignore OS files
+.DS_Store
