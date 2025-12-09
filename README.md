@@ -50,7 +50,7 @@ Before running the project, you need these installed on your system:
 
 ## ▶️ How to Run
 
-1.  Create a folder 'project_data' and uplaod the input video.
+1.  Create a folder 'project_data' and upload the input video.
 2.  **Start Ollama:** Make sure the Ollama app is running in your background (taskbar).
 3.  **Launch the Dashboard:**
     ```bash
