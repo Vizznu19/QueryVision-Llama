@@ -50,12 +50,13 @@ Before running the project, you need these installed on your system:
 
 ## ▶️ How to Run
 
-1.  **Start Ollama:** Make sure the Ollama app is running in your background (taskbar).
-2.  **Launch the Dashboard:**
+1.  Create a folder 'project_data' and uplaod the input video.
+2.  **Start Ollama:** Make sure the Ollama app is running in your background (taskbar).
+3.  **Launch the Dashboard:**
     ```bash
     streamlit run app.py
     ```
-3.  **Usage:**
+4.  **Usage:**
     * Go to the **"Ingest Video"** tab -> Upload a video -> Click "Generate Logs".
     * Go to the **"Ask the Analyst"** tab -> Type your question (e.g., *"Find the red car"*).
     * The system will answer and auto-play the evidence clip.
