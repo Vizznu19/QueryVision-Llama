@@ -1,188 +1,166 @@
-# 👁️ QueryVision Pro: Identity-Aware AI Forensic Video Analyst
+👁️ QueryVision Pro: AI Forensic Video Analyst
+QueryVision Pro is a local, privacy-focused video search engine. It allows you to upload CCTV or highway footage and ask complex natural language questions like "Find the suspect wearing a red shirt" or "Find the white commercial truck."
 
-QueryVision Pro is a local, privacy-focused video search engine with identity-aware capabilities. It allows you to upload CCTV footage and ask complex natural language questions like *"Find the man in the blue shirt"* or *"Show me all faces detected in this video."*
+🎯 Key Features
+🔍 Semantic Hybrid Search: Combines FAISS vector similarity search with LLM reasoning for intelligent, time-accurate video querying.
 
-## 🎯 Key Features
+⚡ Turbo Ingestion Pipeline: Uses a multi-layered filtering funnel (hash checking, temporal motion masking, and ID debouncing) to process heavy video rapidly.
 
-- **🔍 Hybrid Search**: Vector similarity search + LLM reasoning for intelligent video querying
-- **👥 Face Recognition**: Automatic face detection and identification with deduplication
-- **🎥 Smart Ingestion**: Motion detection, duplicate prevention, and automated indexing
-- **💾 Database System**: SQLite database with FAISS vector indexing for fast retrieval
-- **🎬 Evidence Clips**: Automatic video clip generation at relevant timestamps
-- **🗑️ System Management**: Full database and file management with factory reset option
+🎥 Automated Context Captions: Uses YOLOv8 for spatial object tracking and BLIP with context-padding for highly accurate forensic descriptions.
 
-## 🏗️ Architecture
+💾 Dual Database System: Uses SQLite for strict metadata logging and FAISS for high-speed mathematical vector retrieval.
 
-It uses a "Hybrid AI" architecture:
-1.  **Vision Layer:** YOLOv8 (Object Detection) + BLIP (Image Captioning) to analyze video frames
-2.  **Identity Layer:** Face Recognition library for person identification and tracking
-3.  **Search Layer:** FAISS (Vector Search) + Sentence Transformers (Embeddings) for semantic search
-4.  **Reasoning Layer:** Llama 3.2 (via Ollama) to analyze logs and answer questions intelligently
-5.  **Interface:** A clean Streamlit Dashboard with 4 main tabs
+🎬 Evidence Extraction: Automatically snips and generates .mp4 evidence clips at the exact moment a match is found.
 
----
+⚙️ System Management: A polished, enterprise-grade UI to manage databases, delete footage, or perform a secure factory reset.
 
-## 🚀 Prerequisites
+🏗️ Architecture
+The system utilizes a "Hybrid AI" pipeline:
 
+Vision Layer: YOLOv8 (Object Tracking) + BLIP (Image Captioning) to analyze and describe video frames.
+
+Search Layer: Sentence Transformers (Embeddings) + FAISS (Vector Database) for semantic text-to-video matching.
+
+Reasoning Layer: Llama 3.2 (via Ollama) to logically analyze the retrieved logs and pinpoint exact timestamps.
+
+Interface: A clean, light-themed Streamlit Dashboard with 3 primary forensic tabs.
+
+🚀 Prerequisites
 Before running the project, you need these installed on your system:
 
-1.  **Python 3.10+**
-2.  **Ollama** (The AI Brain)
-    * Download from [ollama.com](https://ollama.com/).
-    * Install it and run `ollama pull llama3.2` in your system terminal.
-3.  **FFmpeg** (The Video Cutter)
-    * Download "ffmpeg-essentials" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
-    * Extract `ffmpeg.exe` and place it **directly inside this project folder** (next to `app.py`).
+Python 3.10+
 
----
+Ollama (The AI Brain)
 
-## 🛠️ Installation
+Download from ollama.com.
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <YOUR_REPO_URL_HERE>
-    cd query-vision-llama
-    ```
+Install it and run ollama pull llama3.2 in your system terminal.
 
-2.  **Create a Virtual Environment (Recommended):**
-    ```bash
-    python -m venv .venv
-    # Windows:
-    .venv\Scripts\activate
-    # Mac/Linux:
-    source .venv/bin/activate
-    ```
+FFmpeg (The Video Cutter)
 
-3.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    pip install streamlit ollama face-recognition
-    ```
-    
-    **Note:** On Windows, if `face-recognition` installation fails, you may need to install `cmake` and `dlib` first:
-    ```bash
-    pip install cmake
-    pip install dlib
-    pip install face-recognition
-    ```
+Download the "ffmpeg-essentials" build from gyan.dev.
 
----
+Extract ffmpeg.exe and place it directly inside this project folder (next to app.py).
 
-## ▶️ How to Run
+🛠️ Installation
+Clone the repository:
 
-1.  **Start Ollama:** Make sure the Ollama app is running in your background (taskbar). If you haven't pulled the model yet, run `ollama pull llama3.2` in terminal.
-2.  **Launch the Dashboard:**
-    ```bash
-    streamlit run app.py
-    ```
-3.  **Usage Workflow:**
+Bash
 
-    **Step 1: Smart Ingest (📂 Tab)**
-    * Upload your CCTV footage (MP4 or AVI format)
-    * Click "Start Identity Ingest"
-    * The system will:
-      - Process 1 frame per second
-      - Filter static frames using motion detection
-      - Detect objects (persons, vehicles) using YOLO
-      - Generate captions using BLIP
-      - Extract and identify unique faces
-      - Index everything in the database
-    * Progress bar shows ingestion status
-    * Duplicate videos are automatically detected and skipped
+git clone <YOUR_REPO_URL_HERE>
+cd query-vision-llama
+Create a Virtual Environment (Recommended):
 
-    **Step 2: Search Analyst (🕵️ Tab)**
-    * Type your natural language query (e.g., *"Find the person in the blue shirt"*)
-    * Click "Run Analysis"
-    * The system will:
-      - Convert your query to vector embeddings
-      - Search similar events in the FAISS index
-      - Use Llama 3.2 to reason about the best match
-      - Generate an evidence clip automatically
-      - Display the clip at the relevant timestamp
+Bash
 
-    **Step 3: Face Gallery (👥 Tab)**
-    * View all unique faces detected across all videos
-    * See timestamp and source video for each face
-    * Faces are automatically deduplicated (same person appears once)
+python -m venv .venv
 
-    **Step 4: Manage (🗑️ Tab)**
-    * View and delete generated evidence clips
-    * View and delete ingested source videos
-    * Factory Reset: Completely wipe all data (database, faces, videos, clips)
+# Windows:
+.\.venv\Scripts\activate
 
----
+# Mac/Linux:
+source .venv/bin/activate
+Install Dependencies:
 
-## 📊 How It Works
+Bash
 
-### Processing Pipeline
+pip install streamlit opencv-python sqlite3-api ollama torch torchvision faiss-cpu numpy sentence-transformers transformers pillow ultralytics
+▶️ How to Run
+Start Ollama: Make sure the Ollama app is running in your system background.
 
-1. **Video Ingestion:**
-   - Frame sampling (1 frame per second)
-   - Motion detection filtering (skips static frames)
-   - Object detection (YOLO: persons, vehicles)
-   - Face extraction and encoding (face_recognition library)
-   - Image captioning (BLIP: generates descriptions)
-   - Text embedding (Sentence Transformers: converts to vectors)
-   - Database storage (SQLite + FAISS index)
+Launch the Dashboard:
 
-2. **Search Process:**
-   - User query → Text embedding
-   - Vector similarity search (FAISS)
-   - Retrieve top matches from database
-   - LLM reasoning (Llama 3.2) with context
-   - Extract timestamp from LLM response
-   - Generate evidence clip (FFmpeg)
+Bash
 
-3. **Face Recognition:**
-   - Detects faces in person bounding boxes
-   - Upscales small faces for better detection
-   - Encodes faces using dlib/HOG model
-   - Deduplicates faces within same video
-   - Stores face images and encodings
+streamlit run app.py
+(Alternatively, use python ingest.py for headless, background processing of massive highway datasets).
 
-## 🗂️ Project Structure
+Usage Workflow:
 
-```
+Step 1: Smart Ingest (📂 Tab)
+
+Upload your CCTV footage (MP4 or AVI format).
+
+Click "Start Turbo Ingest Pipeline".
+
+The system applies the filtering funnel:
+
+Downsamples to ~3 frames per second (forensic sweet spot).
+
+Drops static frames via motion detection.
+
+Tracks distinct objects to avoid redundant processing.
+
+Generates enriched AI captions and logs them to the database.
+
+Duplicate files are automatically detected and bypassed.
+
+Step 2: Search Analyst (🕵️ Tab)
+
+Type your natural language query (e.g., "Find the man in the blue shirt").
+
+Click "Run Forensic Analysis".
+
+The system will:
+
+Convert your query to vector embeddings.
+
+Search for similar visual events in the FAISS index.
+
+Use Llama 3.2 to deduce the absolute best match.
+
+Extract the timestamp and generate an MP4 evidence clip right on your screen.
+
+Step 3: System Manage (⚙️ Tab)
+
+View and delete generated evidence clips and text logs.
+
+View and delete ingested source videos.
+
+Factory Reset: Securely wipe the SQLite database, FAISS index, and all media folders for a clean slate.
+
+📊 How the Optimization Funnel Works
+To process heavy Vision-Language models on standard hardware, the pipeline uses strict optimizations:
+
+File Hashing: SHA-256 checks prevent re-indexing the same video twice.
+
+Temporal Masking: Drops 90% of frames. Only active frames (motion > 1.5%) are passed to YOLO.
+
+Spatial Filtering: YOLO is restricted to forensic classes (Persons, Cars, Trucks). Objects under 50x50 pixels are discarded to prevent AI hallucinations.
+
+ID Debouncing: YOLO assigns unique track IDs. If a person stands still for 5 minutes, the system enforces a cooldown, only sending them to BLIP once every 10 seconds.
+
+Context Padding: YOLO bounding boxes are mathematically padded by 15% to give BLIP background context for more accurate descriptive captions.
+
+🗂️ Project Structure
+Plaintext
+
 query-vision-llama/
-├── app.py                  # Main Streamlit application
-├── requirements.txt        # Python dependencies
-├── ffmpeg.exe             # FFmpeg executable (required)
-├── yolov8n.pt             # YOLO model (auto-downloaded)
-├── queryvision.db         # SQLite database (auto-created)
-├── faiss_store.index      # FAISS vector index (auto-created)
-├── project_data/          # Uploaded videos storage
-├── project_faces/         # Extracted face images
-├── search_output/         # Generated evidence clips
-└── hf_cache/              # Hugging Face model cache
-```
+├── app.py                  # Main Streamlit forensic dashboard
+├── ingest.py               # Standalone script for CLI batch ingestion
+├── ffmpeg.exe              # FFmpeg executable for video clipping
+├── queryvision.db          # SQLite database (Auto-generated)
+├── faiss_store.index       # FAISS vector index (Auto-generated)
+├── project_data/           # Uploaded source videos directory
+├── search_output/          # Generated evidence clips & text logs
+└── hf_cache/               # Local cache for heavy Hugging Face models
+🧩 Troubleshooting
+Error: FileNotFoundError: ffmpeg
 
-## 🧩 Troubleshooting
+You forgot to put ffmpeg.exe in the root folder. Download it and drop it in.
 
-* **Error: `FileNotFoundError: ffmpeg`**
-    * You forgot to put `ffmpeg.exe` in the root folder. Download it and drop it in.
+Error: Ollama connection failed
 
-* **Error: `Ollama connection failed`**
-    * Open the Ollama app on your computer. It needs to be running to answer questions.
-    * Make sure you've run `ollama pull llama3.2` to download the model.
+Open the Ollama app on your computer. It needs to be running to answer questions. Ensure you have run ollama pull llama3.2.
 
-* **Blank Screen on Launch**
-    * The first run takes time to download the YOLO/BLIP/Sentence Transformer models. Check your terminal for download progress.
-    * Models are cached in `hf_cache/` folder after first download.
+System Freezing During Ingestion
 
-* **Face Recognition Not Working**
-    * Make sure `face-recognition` library is installed: `pip install face-recognition`
-    * On Windows, you may need to install `cmake` and `dlib` first
-    * Face recognition uses HOG model (CPU-based) for compatibility
+Video processing is RAM-heavy. Close background applications. The system automatically utilizes CUDA if an NVIDIA GPU is present.
 
-* **Slow Processing**
-    * Processing 1 frame per second is normal. Large videos will take time.
-    * Use GPU if available (CUDA) for faster YOLO/BLIP inference
-    * Motion detection helps skip static frames and speed up processing
+Video Already Indexed Warning
 
-* **Video Already Indexed Warning**
-    * The system uses SHA-256 file hashing to detect duplicates
-    * To reprocess, use Factory Reset in Manage tab, or manually delete from database
+The system strictly prevents duplicate processing. To force a reprocess, use the Factory Reset in the Manage tab.
 
-* **Database Errors**
-    * If database gets corrupted, delete `queryvision.db` and restart
-    * Use Factory Reset in Manage tab for a clean slate
+Blank Screen on First Launch
+
+The very first run takes time to download the YOLO, BLIP, and Sentence Transformer models. Check your terminal for the download progress bars.
