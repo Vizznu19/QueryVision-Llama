@@ -6,13 +6,12 @@ import subprocess
 import ollama
 import torch
 import hashlib
-import pickle
 import numpy as np
 import faiss
 import re
-import face_recognition
 import uuid
 import shutil
+import time
 from PIL import Image
 from ultralytics import YOLO
 from transformers import BlipProcessor, BlipForConditionalGeneration
@@ -27,11 +26,10 @@ CACHE_DIR = os.path.join(BASE_DIR, "hf_cache")
 DB_FILE = os.path.join(BASE_DIR, "queryvision.db")
 FAISS_INDEX_FILE = os.path.join(BASE_DIR, "faiss_store.index")
 VIDEO_FOLDER = os.path.join(BASE_DIR, "project_data")
-FACES_FOLDER = os.path.join(BASE_DIR, "project_faces") 
 OUTPUT_FOLDER = os.path.join(BASE_DIR, "search_output")
 
 # Ensure directories exist
-for folder in [VIDEO_FOLDER, OUTPUT_FOLDER, FACES_FOLDER]:
+for folder in [VIDEO_FOLDER, OUTPUT_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
 os.environ['HF_HOME'] = CACHE_DIR
@@ -42,7 +40,6 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, video_hash TEXT, video_name TEXT, timestamp REAL, caption TEXT, embedding BLOB)''') 
     c.execute('''CREATE TABLE IF NOT EXISTS processed_videos (file_hash TEXT PRIMARY KEY, file_name TEXT, processed_date TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS faces (id INTEGER PRIMARY KEY AUTOINCREMENT, video_hash TEXT, video_name TEXT, timestamp REAL, image_path TEXT, encoding BLOB)''')
     conn.commit()
     return conn
 
@@ -53,6 +50,7 @@ conn = init_db()
 def load_models():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     st.sidebar.info(f"🚀 AI Hardware: {device.upper()}")
+    # Use your custom model if you have trained one, otherwise 'yolov8n.pt'
     yolo = YOLO('yolov8n.pt') 
     processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base", cache_dir=CACHE_DIR)
     model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base", cache_dir=CACHE_DIR).to(device)
@@ -105,16 +103,15 @@ def cut_clip(video_name, timestamp, duration=10):
     return output_path
 
 # --- UI LAYOUT ---
-st.title("👁️ QueryVision : AI Forensic Video Analyst")
+st.title("QueryVision : AI Forensic Video Analyst")
 
 c = conn.cursor()
 log_count = c.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
-face_count = c.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
 
 st.sidebar.metric("Events Tracked", log_count)
-st.sidebar.metric("Unique Faces Found", face_count)
 
-tab_search, tab_faces, tab_upload, tab_manage = st.tabs(["🕵️ Search Analyst", "👥 Face Gallery", "📂 Smart Ingest", "🗑️ Manage"])
+# REMOVED FACE GALLERY TAB
+tab_search, tab_upload, tab_manage = st.tabs(["🕵️ Search Analyst", "📂 Smart Ingest", "🗑️ Manage"])
 
 # --- TAB 1: SEARCH ---
 with tab_search:
@@ -139,6 +136,12 @@ with tab_search:
                 m, s = divmod(int(ts), 60)
                 context_log += f"- [{m:02d}:{s:02d}] {video}: {cap}\n"
             
+            # --- HIGHLY VISIBLE INTERMEDIATE RESULTS ---
+            st.success(f"✅ Found {len(relevant_logs)} matching events in the database.")
+            with st.expander("👀 View Raw Retrieved Logs (Intermediate Results)", expanded=True):
+                st.code(context_log, language="text")
+            # --------------------------------------------
+
             with st.spinner("Llama 3 Reasoning..."):
                 try:
                     system_prompt = """
@@ -156,7 +159,7 @@ with tab_search:
                         {'role': 'user', 'content': f"LOGS:\n{context_log}\n\nQUESTION: {query}"}
                     ])
                     answer = response['message']['content']
-                    st.markdown(answer)
+                    st.markdown(f"**🤖 Analyst Conclusion:**\n> {answer}")
                     
                     time_matches = re.findall(r'(\d+):(\d+)', answer)
                     if time_matches:
@@ -171,23 +174,7 @@ with tab_search:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-# --- TAB 2: FACE GALLERY ---
-with tab_faces:
-    st.header("Identified Subjects")
-    c.execute("SELECT image_path, timestamp, video_name FROM faces ORDER BY id DESC")
-    faces = c.fetchall()
-    if not faces:
-        st.info("No faces detected yet.")
-    else:
-        cols = st.columns(5)
-        for i, (img_path, ts, vid_name) in enumerate(faces):
-            with cols[i % 5]:
-                if os.path.exists(img_path):
-                    st.image(img_path, use_container_width=True)
-                    m, s = divmod(int(ts), 60)
-                    st.caption(f"Time: {m:02d}:{s:02d}\nFile: {vid_name}")
-
-# --- TAB 3: SMART INGEST ---
+# --- TAB 2: SMART INGEST (TURBO MODE + ACCURACY FIXES) ---
 with tab_upload:
     uploaded_file = st.file_uploader("Upload CCTV Footage", type=['mp4', 'avi'])
     if uploaded_file:
@@ -205,88 +192,145 @@ with tab_upload:
         if c.fetchone():
             st.warning("Video already indexed.")
         else:
-            if st.button("Start Identity Ingest"):
+            if st.button("Start Turbo Ingest"):
                 cap = cv2.VideoCapture(save_path)
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30
-                fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=False)
+                
+                # This analyzes 3 frames EVERY second (a great balance of speed and accuracy)
+                skip_rate = int(fps / 3) 
+                fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=25, detectShadows=False)
                 
                 frame_count = 0
                 processed_count = 0
                 prog_bar = st.progress(0)
-                status_text = st.empty()
-                known_encodings_this_session = [] 
                 
+                status_text = st.empty()
+                
+                # --- OPEN TEXT LOG FILE FOR BACKGROUND LOGGING ---
+                safe_log_name = uploaded_file.name.replace(" ", "_")
+                log_file_path = os.path.join(OUTPUT_FOLDER, f"captions_log_{safe_log_name}.txt")
+                log_file = open(log_file_path, "w", encoding="utf-8")
+                log_file.write(f"--- AI Captioning Log for {uploaded_file.name} ---\n\n")
+                # -------------------------------------------------
+                
+                track_history = {} 
+                RE_ANALYZE_INTERVAL = int(fps * 10) 
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
                 while cap.isOpened():
                     ret, frame = cap.read()
                     if not ret: break
-                    if frame_count % int(fps) == 0: 
-                        prog_bar.progress(min(frame_count / int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1.0))
-                        status_text.text(f"Analyzing frame {frame_count}...")
-                        
-                        mask = fgbg.apply(frame)
-                        if cv2.countNonZero(mask) < (frame.shape[0]*frame.shape[1]*0.01):
-                            frame_count += 1; continue
-                        
-                        results = yolo.predict(frame, classes=[0,1,2,3,5,7], verbose=False, device=device)
-                        for r in results:
-                            for box in r.boxes:
-                                x1,y1,x2,y2 = map(int, box.xyxy[0])
-                                cls = int(box.cls[0])
-                                h_img, w_img, _ = frame.shape
-                                x1, y1 = max(0, x1), max(0, y1)
-                                x2, y2 = min(w_img, x2), min(h_img, y2)
-                                if (x2-x1) < 10 or (y2-y1) < 10: continue 
-                                crop = frame[y1:y2, x1:x2]
-                                if crop.size == 0: continue
-                                
-                                # Face Logic
-                                if cls == 0: 
-                                    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                                    h, w = rgb_crop.shape[:2]
-                                    if h < 200 or w < 200: rgb_crop = cv2.resize(rgb_crop, (0, 0), fx=2, fy=2)
-                                    face_locs = face_recognition.face_locations(rgb_crop, model="hog")
-                                    if face_locs:
-                                        encodings = face_recognition.face_encodings(rgb_crop, face_locs)
-                                        for encoding in encodings:
-                                            matches = face_recognition.compare_faces(known_encodings_this_session, encoding, tolerance=0.6)
-                                            if not any(matches):
-                                                known_encodings_this_session.append(encoding)
-                                                bgr_face = cv2.cvtColor(rgb_crop, cv2.COLOR_RGB2BGR)
-                                                face_path = os.path.join(FACES_FOLDER, f"face_{file_hash[:8]}_{frame_count}.jpg")
-                                                cv2.imwrite(face_path, bgr_face)
-                                                c.execute("INSERT INTO faces (video_hash, video_name, timestamp, image_path, encoding) VALUES (?, ?, ?, ?, ?)",
-                                                          (file_hash, uploaded_file.name, frame_count/fps, face_path, pickle.dumps(encoding)))
+                    
+                    if frame_count % skip_rate != 0:
+                        frame_count += 1
+                        continue
 
-                                # BLIP Logic
-                                pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                                inputs = blip_processor(pil_img, return_tensors="pt").to(device)
-                                out = blip_model.generate(**inputs, max_new_tokens=20)
-                                cap_text = blip_processor.decode(out[0], skip_special_tokens=True)
-                                full_caption = f"{yolo.names[cls]}: {cap_text}"
-                                vector = embedder.encode(full_caption)
-                                c.execute("INSERT INTO logs (video_hash, video_name, timestamp, caption, embedding) VALUES (?, ?, ?, ?, ?)",
-                                          (file_hash, uploaded_file.name, frame_count/fps, full_caption, vector.astype('float32').tobytes()))
-                                processed_count += 1
+                    if total_frames > 0:
+                        progress = frame_count / total_frames
+                        prog_bar.progress(min(progress, 1.0))
+                    status_text.text(f"Scanning... {processed_count} Events Logged to Database")
+                    
+                    mask = fgbg.apply(frame)
+                    if cv2.countNonZero(mask) < (frame.shape[0]*frame.shape[1]*0.015):
+                        frame_count += 1; continue
+                    
+                    results = yolo.track(frame, classes=[0,1,2,3,5,7], persist=True, verbose=False, device=device)
+                    
+                    for r in results:
+                        if r.boxes.id is None: continue 
+                        
+                        boxes = r.boxes.xyxy.cpu().numpy()
+                        ids = r.boxes.id.cpu().numpy()
+                        clss = r.boxes.cls.cpu().numpy()
+                        
+                        for box, track_id, cls in zip(boxes, ids, clss):
+                            track_id = int(track_id)
+                            cls = int(cls)
+                            
+                            last_seen = track_history.get(track_id, -99999)
+                            if (frame_count - last_seen) < RE_ANALYZE_INTERVAL:
+                                continue 
+                            
+                            x1,y1,x2,y2 = map(int, box)
+                            h_img, w_img, _ = frame.shape
+                            
+                            width = x2 - x1
+                            height = y2 - y1
+                            
+                            if width < 50 or height < 50: continue 
+
+                            # --- ACCURACY FIX 1: CONTEXT PADDING ---
+                            pad_x = int(width * 0.15)
+                            pad_y = int(height * 0.15)
+                            
+                            x1 = max(0, x1 - pad_x)
+                            y1 = max(0, y1 - pad_y)
+                            x2 = min(w_img, x2 + pad_x)
+                            y2 = min(h_img, y2 + pad_y)
+                            # ---------------------------------------
+
+                            track_history[track_id] = frame_count
+                            crop = frame[y1:y2, x1:x2]
+                            if crop.size == 0: continue
+                            
+                            # (FACE DETECTION LOGIC REMOVED HERE)
+
+                            # --- ACCURACY FIX 2 & 3: UPSCALING & GUIDED PROMPTING ---
+                            rgb_crop_blip = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                            bh, bw = rgb_crop_blip.shape[:2]
+                            
+                            if bh < 224 or bw < 224: 
+                                rgb_crop_blip = cv2.resize(rgb_crop_blip, (224, 224), interpolation=cv2.INTER_LANCZOS4)
+                            
+                            pil_img = Image.fromarray(rgb_crop_blip)
+                            class_name = yolo.names[cls]
+                            
+                            if cls == 0: # Person
+                                prompt_text = "a person wearing"
+                            elif cls in [2, 3, 5, 7]: # Car, Motorcycle, Bus, Truck
+                                prompt_text = f"a {class_name} colored"
+                            else:
+                                prompt_text = f"a {class_name}"
+
+                            inputs = blip_processor(pil_img, text=prompt_text, return_tensors="pt").to(device)
+                            out = blip_model.generate(**inputs, max_new_tokens=20)
+                            cap_text = blip_processor.decode(out[0], skip_special_tokens=True)
+                            
+                            full_caption = f"{class_name}: {cap_text.strip()}"
+                            # --------------------------------------------------------
+
+                            vector = embedder.encode(full_caption)
+                            c.execute("INSERT INTO logs (video_hash, video_name, timestamp, caption, embedding) VALUES (?, ?, ?, ?, ?)",
+                                      (file_hash, uploaded_file.name, frame_count/fps, full_caption, vector.astype('float32').tobytes()))
+                            processed_count += 1
+                            
+                            # --- WRITE CAPTION TO LOG FILE ---
+                            m, s = divmod(int(frame_count/fps), 60)
+                            log_file.write(f"[Frame {frame_count} | {m:02d}:{s:02d}] {full_caption}\n")
+                            log_file.flush()
+                            # --------------------------------------
+
                     frame_count += 1
                 
                 cap.release()
+                log_file.close() 
+                
                 import datetime
                 c.execute("INSERT INTO processed_videos VALUES (?, ?, ?)", (file_hash, uploaded_file.name, str(datetime.datetime.now())))
                 conn.commit()
                 vector_index = rebuild_faiss_index()
-                st.success(f"✅ Ingest Complete! Indexed {processed_count} events.")
+                st.success(f"✅ Ingest Complete! Processed {processed_count} significant events. Reference log saved in 'search_output' folder.")
                 st.rerun()
 
-# --- TAB 4: MANAGE ---
+# --- TAB 3: MANAGE ---
 with tab_manage:
     st.header("System Management")
     
-    # SECTION 1: Evidence Clips (Delete Outputs)
-    st.subheader("📁 Generated Evidence Clips")
-    clips = [f for f in os.listdir(OUTPUT_FOLDER) if f.endswith(".mp4")]
+    st.subheader("📁 Generated Evidence Clips & Logs")
+    clips = [f for f in os.listdir(OUTPUT_FOLDER) if f.endswith((".mp4", ".txt"))]
     
     if not clips:
-        st.info("No evidence clips generated yet.")
+        st.info("No evidence clips or logs generated yet.")
     else:
         for clip in clips:
             col1, col2 = st.columns([4, 1])
@@ -303,7 +347,6 @@ with tab_manage:
     
     st.divider()
 
-    # SECTION 2: Ingested Videos (Delete Raw Inputs)
     st.subheader("📼 Ingested Source Videos")
     videos = [f for f in os.listdir(VIDEO_FOLDER) if f.lower().endswith(('.mp4', '.avi', '.mov'))]
     
@@ -317,14 +360,8 @@ with tab_manage:
             with col2:
                 if st.button("Delete", key=f"del_vid_{video}"):
                     try:
-                        # 1. Delete File
                         file_path = os.path.join(VIDEO_FOLDER, video)
                         os.remove(file_path)
-                        
-                        # 2. Clean Database (Optional but recommended)
-                        # We calculate hash to find DB entry (this is slow for big files, so maybe skip for now or store hash mapping)
-                        # Ideally, we just delete file. To clean DB, user should use Factory Reset or we implement a complex lookup.
-                        
                         st.success(f"Deleted {video}")
                         st.rerun()
                     except Exception as e:
@@ -332,32 +369,28 @@ with tab_manage:
 
     st.divider()
 
-    # SECTION 3: Nuclear Option
-    st.subheader("⚠️ Factory Reset")
-    st.write("This will delete the Database, Faces, Logs, Evidence Clips, AND the uploaded Source Videos.")
+    st.subheader("Factory Reset")
+    st.write("This will delete the Database, Logs, Evidence Clips, AND the uploaded Source Videos.")
     
-    if st.button("☢️ RESET EVERYTHING (Clean Start)", type="primary"):
+    if st.button("RESET EVERYTHING (Clean Start)", type="primary"):
         try:
-            # 1. Clear Database Tables
             c.execute("DELETE FROM logs")
             c.execute("DELETE FROM processed_videos")
-            c.execute("DELETE FROM faces")
+            # REMOVED: c.execute("DELETE FROM faces")
             conn.commit()
             c.execute("VACUUM")
             
-            # 2. Delete Files
             if os.path.exists(FAISS_INDEX_FILE): os.remove(FAISS_INDEX_FILE)
             
-            # Helper to clear a folder
             def clear_folder(folder_path):
                 if os.path.exists(folder_path):
                     for f in os.listdir(folder_path):
                         try: os.remove(os.path.join(folder_path, f))
                         except: pass
             
-            clear_folder(FACES_FOLDER)
+            # REMOVED: clear_folder(FACES_FOLDER)
             clear_folder(OUTPUT_FOLDER)
-            clear_folder(VIDEO_FOLDER) # <--- Now clears the source videos too
+            clear_folder(VIDEO_FOLDER) 
             
             st.success("✅ System Fully Wiped! Ready for fresh start.")
             st.rerun()
