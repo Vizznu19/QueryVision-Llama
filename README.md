@@ -1,4 +1,4 @@
-# 👁️ QueryVision Pro: Identity-Aware AI Forensic Video Analyst
+# QueryVision: Identity-Aware AI Forensic Video Analyst
 
 QueryVision Pro is a local, privacy-focused video search engine with identity-aware capabilities. It allows you to upload CCTV footage and ask complex natural language questions like *"Find the man in the blue shirt"* or *"Show me all faces detected in this video."*
 
