@@ -92,7 +92,7 @@ def main():
             try:
                 # --- 🚦 CHANGED HERE: Added Highway Vehicles ---
                 # 0=Person, 1=Bicycle, 2=Car, 3=Motorcycle, 5=Bus, 7=Truck
-                results = yolo.predict(frame, classes=[0, 1, 2, 3, 5, 7], verbose=False, device='cpu')
+                results = yolo.predict(frame, verbose=False, device='cpu')
                 
                 # OPTION: If you want EVERYTHING (Traffic lights, signs, birds), remove 'classes=...' entirely:
                 # results = yolo.predict(frame, verbose=False, device='cpu')
