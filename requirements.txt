@@ -1,0 +1,10 @@
+opencv-python
+torch
+numpy
+ultralytics
+transformers
+sentence-transformers
+faiss-cpu
+Pillow
+tf-keras
+
