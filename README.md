@@ -1,73 +1,70 @@
-# 👁️ QueryVision: AI Forensic Video Analyst
+# 👁️ QueryVision: AI Surveillance & Forensic Analyst
 
-QueryVision is a local, privacy-focused video search engine. It allows you to upload CCTV footage and ask complex natural language questions like *"Did anyone steal the red bag?"* or *"Describe the sequence of events at the door."*
+QueryVision is a powerful, **100% local**, and privacy-focused AI surveillance platform. It transforms standard CCTV footage or live phone streams (RTSP) into a searchable intelligence database.
 
-It uses a "Hybrid AI" architecture:
-1.  **Vision Layer:** YOLOv8 (Objects) + BLIP (Captions) to "watch" the video.
-2.  **Reasoning Layer:** Llama 3.2 (via Ollama) to analyze the logs and answer questions.
-3.  **Interface:** A clean Streamlit Dashboard.
+> *"Did anyone touch my laptop while I was away?"* — QueryVision doesn't just watch; it understands and reasons.
 
 ---
 
-## 🚀 Prerequisites
+## 🌟 Key Features
 
-Before running the project, you need these installed on your system:
+### 1. 🚀 Turbo Ingest (Forensic Mode)
+Upload massive CCTV files and index them in minutes. 
+- **Motion Filtering:** Automatically skips "empty" footage to save CPU/GPU power.
+- **High-Detail Crops:** Automatically "zooms in" on objects for clear identification.
 
-1.  **Python 3.10+**
-2.  **Ollama** (The AI Brain)
-    * Download from [ollama.com](https://ollama.com/).
-    * Install it and run `ollama pull llama3.2` in your system terminal.
-3.  **FFmpeg** (The Video Cutter)
-    * Download "ffmpeg-essentials" build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
-    * Extract `ffmpeg.exe` and place it **directly inside this project folder** (next to `app.py`).
+### 2. 🖥️ Live RTSP Analysis (Surveillance Mode)
+Connect your phone or IP camera via RTSP for real-time intelligence.
+- **Visual Overlays:** Real-time green bounding boxes and tracking IDs.
+- **Surveillance Logs:** Instant text logs of every person or object detected.
 
----
+### 3. 🧠 Hybrid AI Brain
+- **Detection:** YOLOv8 (identifies people, bags, laptops, vehicles).
+- **Description:** BLIP (generates natural language captions for every detection).
+- **Memory:** Sentence-Transformers + FAISS (stores meanings as 384D vectors).
+- **Reasoning:** Llama 3 (Ollama) acts as your expert Forensic Analyst.
 
-## 🛠️ Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/sanansalam/QueryVision-Llama.git
-    cd QueryVision-Llama
-    ```
-
-2.  **Create a Virtual Environment (Recommended):**
-    ```bash
-    python -m venv .venv
-    # Windows:
-    .venv\Scripts\activate
-    # Mac/Linux:
-    source .venv/bin/activate
-    ```
-
-3.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    pip install ollama
-    ```
+### 4. 🌐 MCP Server (Model Context Protocol) 
+QueryVision now includes an **MCP Server**, allowing you to connect **Claude Desktop** directly to your cameras. You can "talk" to your videos from anywhere.
 
 ---
 
-## ▶️ How to Run
+## 🚀 Quick Start
 
-1.  Create a folder 'project_data' and upload the input video.
-2.  **Start Ollama:** Make sure the Ollama app is running in your background (taskbar).
-3.  **Launch the Dashboard:**
-    ```bash
-    streamlit run app.py
-    ```
-4.  **Usage:**
-    * Go to the **"Ingest Video"** tab -> Upload a video -> Click "Generate Logs".
-    * Go to the **"Ask the Analyst"** tab -> Type your question (e.g., *"Find the red car"*).
-    * The system will answer and auto-play the evidence clip.
+### 1. Prerequisites
+- **Python 3.10+**
+- **Ollama:** Install from [ollama.com](https://ollama.com/) and run `ollama pull llama3.2`.
+- **FFmpeg:** Place `ffmpeg.exe` in the root directory for evidence clipping.
+
+### 2. Installation
+```bash
+git clone https://github.com/Vizznu19/QueryVision-Llama.git
+cd QueryVision-Llama
+pip install -r requirements.txt
+```
+
+### 3. Launch Dashboard
+```bash
+streamlit run app.py
+```
+
+### 4. Optional: Start MCP Server
+```bash
+python mcp_server.py
+```
 
 ---
 
-## 🧩 Troubleshooting
+## 🛠️ Architecture
 
-* **Error: `FileNotFoundError: ffmpeg`**
-    * You forgot to put `ffmpeg.exe` in the root folder. Download it and drop it in.
-* **Error: `Ollama connection failed`**
-    * Open the Ollama app on your computer. It needs to be running to answer questions.
-* **Blank Screen on Launch**
-    * The first run takes time to download the YOLO/BLIP models. Check your terminal for download progress.
+QueryVision uses a **Vector-Reasoning** architecture:
+1. **YOLO** detects an object.
+2. **BLIP** describes the object in detail.
+3. **SentenceBERT** converts the description to a math vector.
+4. **FAISS** searches the vectors.
+5. **Llama 3** reads the search results and explains them to you.
+
+---
+
+## 🤝 Contributing
+Feel free to fork this project and add new detection classes or improved VLM models. Designed for the **Advanced AI Surveillance Expo**.

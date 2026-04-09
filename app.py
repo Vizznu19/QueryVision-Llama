@@ -1,106 +1,37 @@
 import streamlit as st
 import os
 import cv2
-import sqlite3
-import subprocess
-import ollama
-import torch
-import hashlib
-import numpy as np
-import faiss
 import re
-import uuid
-import shutil
 import time
+import datetime
+import hashlib
 from PIL import Image
-from ultralytics import YOLO
-from transformers import BlipProcessor, BlipForConditionalGeneration
-from sentence_transformers import SentenceTransformer
+import ollama
+from core import (
+    init_db, get_db_connection, load_models, load_faiss_index, 
+    rebuild_faiss_index, get_file_hash, search_logs, cut_clip,
+    VIDEO_FOLDER, OUTPUT_FOLDER, DB_FILE, FAISS_INDEX_FILE
+)
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="QueryVision: AI Survelliance System", page_icon="👁️", layout="wide")
 
-# --- CONFIGURATION ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(BASE_DIR, "hf_cache")
-DB_FILE = os.path.join(BASE_DIR, "queryvision.db")
-FAISS_INDEX_FILE = os.path.join(BASE_DIR, "faiss_store.index")
-VIDEO_FOLDER = os.path.join(BASE_DIR, "project_data")
-OUTPUT_FOLDER = os.path.join(BASE_DIR, "search_output")
-
-# Ensure directories exist
-for folder in [VIDEO_FOLDER, OUTPUT_FOLDER]:
-    os.makedirs(folder, exist_ok=True)
-
-os.environ['HF_HOME'] = CACHE_DIR
-
-# --- DATABASE SETUP ---
-def init_db():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, video_hash TEXT, video_name TEXT, timestamp REAL, caption TEXT, embedding BLOB)''') 
-    c.execute('''CREATE TABLE IF NOT EXISTS processed_videos (file_hash TEXT PRIMARY KEY, file_name TEXT, processed_date TEXT)''')
-    conn.commit()
-    return conn
-
+# --- INITIALIZATION ---
 conn = init_db()
 
-# --- LOAD MODELS ---
 @st.cache_resource
-def load_models():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+def get_cached_models():
+    yolo, processor, model, embedder, device = load_models()
     st.sidebar.info(f"🚀 AI Hardware: {device.upper()}")
-    # Use your custom model if you have trained one, otherwise 'yolov8n.pt'
-    yolo = YOLO('yolov8m.pt') 
-    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large", cache_dir=CACHE_DIR)
-    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", cache_dir=CACHE_DIR).to(device)
-    embedder = SentenceTransformer('all-MiniLM-L6-v2', cache_folder=CACHE_DIR, device='cpu')
     return yolo, processor, model, embedder, device
 
-yolo, blip_processor, blip_model, embedder, device = load_models()
+yolo, blip_processor, blip_model, embedder, device = get_cached_models()
 
-# --- HELPER FUNCTIONS ---
-def rebuild_faiss_index():
-    c = conn.cursor()
-    c.execute("SELECT embedding FROM logs ORDER BY id ASC")
-    rows = c.fetchall()
-    new_index = faiss.IndexFlatIP(384)
-    if rows:
-        embeddings = [np.frombuffer(row[0], dtype='float32') for row in rows]
-        new_index.add(np.stack(embeddings))
-    faiss.write_index(new_index, FAISS_INDEX_FILE)
-    return new_index
+@st.cache_resource
+def get_vector_index():
+    return load_faiss_index(conn)
 
-if os.path.exists(FAISS_INDEX_FILE):
-    vector_index = faiss.read_index(FAISS_INDEX_FILE)
-else:
-    vector_index = rebuild_faiss_index()
-
-def get_file_hash(file_path):
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
-
-def cut_clip(video_name, timestamp, duration=20):
-    video_path = os.path.join(VIDEO_FOLDER, video_name)
-    start_time = max(0, timestamp - 10)
-    unique_id = str(uuid.uuid4())[:8]
-    clip_filename = f"evidence_{int(timestamp)}s_{unique_id}.mp4"
-    output_path = os.path.join(OUTPUT_FOLDER, clip_filename)
-    
-    ffmpeg_cmd = "ffmpeg"
-    local_ffmpeg = os.path.join(BASE_DIR, "ffmpeg.exe")
-    if os.path.exists(local_ffmpeg): ffmpeg_cmd = local_ffmpeg
-    
-    if not os.path.exists(video_path): return None
-
-    # H.264 Re-encoding for Browser Compatibility
-    command = [ffmpeg_cmd, "-ss", str(start_time), "-i", video_path, "-t", str(duration), 
-               "-c:v", "libx264", "-c:a", "aac", "-y", output_path]
-    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return output_path
+vector_index = get_vector_index()
 
 # --- UI LAYOUT ---
 st.title("QueryVision : AI Survelliance System")
@@ -122,29 +53,14 @@ with tab_search:
         else:
             with st.spinner("Searching Vector Database..."):
                 # ---- VECTOR SEARCH ----
-                query_vector = embedder.encode([query],normalize_embeddings=True).astype("float32")
-                distances, indices = vector_index.search(query_vector, 20)
-                scored_logs = []
-                for score, idx in zip(distances[0], indices[0]):
-                    if idx == -1:
-                        continue
-                    c.execute("SELECT video_name, timestamp, caption FROM logs ORDER BY id ASC LIMIT 1 OFFSET ?",(int(idx),))
-                    row = c.fetchone()
-
-                    if row:
-                        scored_logs.append((float(score), row))
-
-# Sort by similarity score (highest first)
-                scored_logs.sort(key=lambda x: x[0], reverse=True)
-
-# Keep top 10 most relevant logs
-                relevant_logs = [row for _, row in scored_logs[:10]]
+                scored_logs = search_logs(query, embedder, vector_index, conn, limit=10)
+                relevant_logs = [row for _, row in scored_logs]
+                
                 context_log = ""
                 for video, ts, cap in relevant_logs:
                     m, s = divmod(int(ts), 60)
                     context_log += f"- [{m:02d}:{s:02d}] {video}: {cap}\n"
             
-                    st.success(f"✅ Found {len(relevant_logs)} matching events in the database.")
 
             with st.spinner("Llama 3 Reasoning..."):
                 try:
@@ -195,9 +111,13 @@ with tab_search:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-# --- TAB 2: SMART INGEST (TURBO MODE + ACCURACY FIXES) ---
+# --- TAB 2: SMART INGEST (FILE & LIVE RTSP) ---
 with tab_upload:
-    uploaded_file = st.file_uploader("Upload CCTV Footage", type=['mp4', 'avi'])
+    # --- 1. UPLOAD SECTION ---
+    st.subheader("📂 Upload Static Footage")
+    uploaded_file = st.file_uploader("Drop CCTV Files", type=['mp4', 'avi'])
+    
+    # --- 2. PROCESSING LOGIC (FILE MODE) - MOVED HERE AS REQUESTED ---
     if uploaded_file:
         save_path = os.path.join(VIDEO_FOLDER, uploaded_file.name)
         if not os.path.exists(save_path):
@@ -210,10 +130,14 @@ with tab_upload:
         file_hash = get_file_hash(save_path)
         c.execute("SELECT file_name FROM processed_videos WHERE file_hash = ?", (file_hash,))
         
-        if c.fetchone():
-            st.warning("Video already indexed.")
+        is_indexed = c.fetchone()
+        if is_indexed:
+            st.info(f"ℹ️ Content from '{uploaded_file.name}' is already in the database.")
+            ingest_label = "🔄 Re-Ingest & Update Intelligence"
         else:
-            if st.button("Start Turbo Ingest"):
+            ingest_label = "🚀 Start Turbo Ingest (File Mode)"
+
+        if st.button(ingest_label, type="primary", use_container_width=True):
                 cap = cv2.VideoCapture(save_path)
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30
                 
@@ -338,11 +262,222 @@ with tab_upload:
                 log_file.close() 
                 
                 import datetime
-                c.execute("INSERT INTO processed_videos VALUES (?, ?, ?)", (file_hash, uploaded_file.name, str(datetime.datetime.now())))
+                c.execute("INSERT OR IGNORE INTO processed_videos VALUES (?, ?, ?)", (file_hash, uploaded_file.name, str(datetime.datetime.now())))
                 conn.commit()
-                vector_index = rebuild_faiss_index()
+                st.cache_resource.clear()
+                vector_index = rebuild_faiss_index(conn)
                 st.success(f"✅ Ingest Complete! Processed {processed_count} significant events. Reference log saved in 'search_output' folder.")
                 st.rerun()
+
+    st.divider()
+    # --- 3. LIVE SURVEILLANCE SECTION ---
+    st.subheader("🖥️ Live RTSP Analysis")
+    
+    # --- SESSION STATE & PRESET LOGIC ---
+    if 'live_ingest' not in st.session_state:
+        st.session_state.live_ingest = False
+    
+    if 'live_prev' not in st.session_state:
+        st.session_state.live_prev = False
+        
+    if 'rtsp_url_input' not in st.session_state:
+        st.session_state.rtsp_url_input = ""
+    
+    # Sidebar persistence (Show even when stopped)
+    st.sidebar.divider()
+    st.sidebar.subheader("🔔 Live Event Log")
+    sidebar_evt_log = st.sidebar.empty()
+    sidebar_log_text = ""
+    
+    col_input, col_btn = st.columns([3, 1])
+    with col_input:
+        rtsp_url = st.text_input("RTSP URL (or Camera IP)", key="rtsp_url_input", placeholder="rtsp://admin:password@192.168.1.1:554/live")
+    with col_btn:
+        st.write("") # Spacer
+        if not st.session_state.live_ingest:
+            if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
+                if rtsp_url:
+                    st.session_state.live_ingest = True; st.session_state.live_prev = False; st.rerun()
+                else: st.error("Please enter an RTSP URL.")
+        else:
+            if st.button("🛑 Stop Analysis", type="primary", use_container_width=True):
+                st.session_state.live_ingest = False; st.rerun()
+
+    if not st.session_state.live_ingest:
+        if not st.session_state.live_prev:
+            if st.button("📺 Preview Stream", use_container_width=True):
+                if rtsp_url:
+                    st.session_state.live_prev = True; st.session_state.live_ingest = False; st.rerun()
+                else: st.error("Please enter an RTSP URL.")
+        else:
+            if st.button("❌ Close Preview", use_container_width=True):
+                st.session_state.live_prev = False; st.rerun()
+
+    # --- SHARED RTSP STABILITY SETTINGS ---
+    # Force UDP Transport for better Wi-Fi stability
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp"
+
+    # --- LIVE PREVIEW MODE (NO AI) ---
+    if st.session_state.live_prev:
+        st.info(f"Connecting to live feed...")
+        src = 0 if rtsp_url == "0" else rtsp_url
+        # Use FFMPEG backend and lower buffer for RTSP speed
+        cap_p = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        cap_p.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not cap_p.isOpened():
+            st.error("❌ Connection failed. Check the URL and ensure your phone's 'Start Server' is ON.")
+            st.session_state.live_prev = False
+        else:
+            prev_mon = st.empty()
+            prev_mon.warning("⏳ Waiting for video signal...")
+            while st.session_state.live_prev:
+                ret, frame = cap_p.read()
+                if not ret: break
+                prev_mon.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Live Preview", use_container_width=True)
+                time.sleep(0.01)
+            cap_p.release()
+
+    # --- LIVE RTSP PROCESSING LOOP ---
+    if st.session_state.live_ingest:
+        st.info(f"📡 Initializing AI Intelligence Feed...")
+        src = 0 if rtsp_url == "0" else rtsp_url
+        cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        if not cap.isOpened():
+            st.error("❌ Failed to connect to source. Check settings.")
+            st.session_state.live_ingest = False
+        else:
+            # Create a unique session ID for this live stream
+            session_start = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_name = f"LIVE_{session_start}"
+            session_hash = "LIVE_" + hashlib.sha256(session_name.encode()).hexdigest()[:10]
+            
+            st.success(f"🎬 Active Session: {session_name}")
+            
+            # --- MONITOR WINDOWS ---
+            status_placeholder = st.sidebar.empty()
+            metric_placeholder = st.sidebar.empty()
+            
+            col_live, col_log = st.columns([2, 1])
+            with col_live:
+                live_monitor = st.empty()
+                live_monitor.warning("⏳ Waiting for first AI frame...")
+            with col_log:
+                event_log = st.empty()
+                log_text = "🔔 Live Events:\n\n"
+
+            processed_count = 0
+            track_history = {}
+            fps = cap.get(cv2.CAP_PROP_FPS) or 20
+            skip_rate = 5 # Improved speed: Process slightly more frames
+            frame_count = 0
+            RE_ANALYZE_INTERVAL = int(fps * 5) # 5 seconds
+
+            error_streak = 0
+            while st.session_state.live_ingest:
+                status_placeholder.info("🕵️ AI is scanning live feed...")
+                metric_placeholder.metric("Events Logged (This Session)", processed_count)
+                
+                # --- FLUSH BUFFER (Essential for real-time stability) ---
+                # We grab 5 frames and only retrieve the last one to ensure no lag
+                for _ in range(5): cap.grab()
+                ret, frame = cap.retrieve()
+                
+                if not ret:
+                    error_streak += 1
+                    if error_streak > 15: # Attempt to survive noise
+                        st.warning("⚠️ Signal weak. Reconnecting...")
+                        cap.release(); cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        if error_streak > 50: # Hard stop after 50 failures
+                            st.error("❌ Stream lost.")
+                            break
+                    continue
+                
+                error_streak = 0
+                frame_count += 1
+                
+                # --- YOLO INTELLIGENCE ---
+                # We analyze every N frames for heavy lifting, but we can show boxes more often if needed.
+                # For CPU, we keep it at every 10 frames as per user setup.
+                if frame_count % 10 == 0:
+                    # 'predict' is more reliable for live streams than 'track'
+                    results = yolo.predict(frame, verbose=False, device=device, conf=0.35)
+                    
+                    # --- FIX: Create a clean copy for the AI to analyze without boxes ---
+                    clean_frame = frame.copy() 
+                    
+                    for r in results:
+                        boxes = r.boxes.xyxy.cpu().numpy()
+                        clss = r.boxes.cls.cpu().numpy()
+                        
+                        for box, cls in zip(boxes, clss):
+                            cls = int(cls)
+                            class_name = yolo.names[cls]
+                            
+                            # DRAWING (Visible to user only)
+                            x1, y1, x2, y2 = map(int, box)
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            cv2.putText(frame, f"{class_name.upper()}", (x1, y1 - 10), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                            # Throttling
+                            last_seen = track_history.get(class_name, -99999)
+                            if (frame_count - last_seen) < RE_ANALYZE_INTERVAL:
+                                continue 
+                            
+                            track_history[class_name] = frame_count
+                            
+                            # BLIP CAPTIONING (Crop from CLEAN frame)
+                            status_placeholder.info(f"🔍 AI Analyzing {class_name}...")
+                            
+                            h_img, w_img, _ = clean_frame.shape
+                            pad_x, pad_y = int((x2-x1)*0.15), int((y2-y1)*0.15)
+                            px1, py1 = max(0, x1-pad_x), max(0, y1-pad_y)
+                            px2, py2 = min(w_img, x2+pad_x), min(h_img, y2+pad_y)
+                            
+                            pil_img = Image.fromarray(cv2.cvtColor(clean_frame[py1:py2, px1:px2], cv2.COLOR_BGR2RGB))
+                            
+                            status_placeholder.info(f"🔍 Analyzing {class_name}...")
+                            prompt_text = f"Describe the {class_name} in detail."
+                            inputs = blip_processor(pil_img, text=prompt_text, return_tensors="pt").to(device)
+                            out = blip_model.generate(**inputs, max_new_tokens=20)
+                            cap_text = blip_processor.decode(out[0], skip_special_tokens=True)
+                            
+                            full_caption = f"{class_name}: {cap_text.strip()}"
+                            vector = embedder.encode(full_caption, normalize_embeddings=True)
+                            
+                            # LOG TO DATABASE (MANDATORY)
+                            curr_ts = time.time()
+                            c.execute("INSERT INTO logs (video_hash, video_name, timestamp, caption, embedding) VALUES (?, ?, ?, ?, ?)",
+                                      (session_hash, session_name, curr_ts, full_caption, vector.astype('float32').tobytes()))
+                            conn.commit()
+                            processed_count += 1
+                            
+                            # UPDATE UI LOGS
+                            log_entry = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {full_caption}\n"
+                            log_text = log_entry + log_text
+                            sidebar_log_text = log_entry + sidebar_log_text
+                            event_log.markdown(log_text)
+                            sidebar_evt_log.text(sidebar_log_text)
+                
+                # Update Dashboard Monitor with Boxes
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                live_monitor.image(rgb_frame, caption="Live Intelligence Feed (Active Analysis)", use_container_width=True)
+                
+            cap.release()
+            # Register session as a "video" so it shows in search/manage
+            c.execute("INSERT OR IGNORE INTO processed_videos VALUES (?, ?, ?)", 
+                      (session_hash, session_name, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            rebuild_faiss_index(conn)
+            st.cache_resource.clear()
+            st.session_state.live_ingest = False
+            st.rerun()
+
+    # End of Ingest Section
 
 # --- TAB 3: MANAGE ---
 with tab_manage:
